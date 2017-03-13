@@ -22,7 +22,7 @@ function varargout = RatPackGUI(varargin)
 
 % Edit the above text to modify the response to help RatPackGUI
 
-% Last Modified by GUIDE v2.5 31-Jan-2017 13:43:23
+% Last Modified by GUIDE v2.5 03-Feb-2017 16:04:27
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -58,6 +58,25 @@ handles.output = hObject;
 % Update handles structure
 guidata(hObject, handles);
 
+%connection flag
+connected = 0;
+setappdata(0,'connected',connected);
+
+%Bluetooth flag
+BT = 0;
+setappdata(0,'BT',BT);
+
+%Set a backround image
+% % create an axes that spans the whole gui
+% ah = axes('unit', 'normalized', 'position', [0 0 1 1]); 
+% % import the background image and show it on the axes
+% bg = imread('neuron.jpg'); imagesc(bg);
+% % prevent plotting over the background and turn the axis off
+% set(ah,'handlevisibility','off','visible','off')
+% % making sure the background is behind all the other uicontrols
+% uistack(ah, 'bottom');
+
+% Turn the handlevisibility off so that we don't inadvertently plot into the axes again
 
 % UIWAIT makes RatPackGUI wait for user response (see UIRESUME)
 % uiwait(handles.figure1);
@@ -77,41 +96,58 @@ varargout{1} = handles.output;
 
 
 % --- Executes on button press in ClearSerialButton.
+% Function will clear the serial port
 function ClearSerialButton_Callback(hObject, eventdata, handles)
 % hObject    handle to ClearSerialButton (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-    mode = 5;
-    setappdata(0,'mode',mode);
 
-if exist('mySerial')
+% Find out if serial port is connected
+mySerial = getappdata(0,'mySerial');
+connected = getappdata(0,'connected');
+
+%if there is a connection, close it
+if(connected)
+    % Reset mode
+    mode = 3;
+    % Put device in reset
+    fwrite(mySerial,uint32(mode),'uint32');
+    % Set mode
+    setappdata(0,'mode',mode);
+    
+    % Close Serial Connection
     mySerial = getappdata(0,'mySerial');
     onCloseSerial(mySerial);
+    disp('mySerial Existed and was Closed');
+else
+    delete(instrfindall) % delete all instruments
 end
-delete(instrfindall) % delete all instruments
+
+% Save device no longer connected
 connected = 0;
-if exist('connected')
-    setappdata(0,'connected',connected);
-end
- set(handles.connectedText, 'string','Disconnected');
+setappdata(0,'connected',connected);
+
+% Set string to disconnected
+set(handles.connectedText, 'string','Disconnected');
     
-RxDataBuffer = getappdata(0,'RxDataBuffer');
-RxDataBuffer.clear();
-setappdata(0,'RxDataBuffer',RxDataBuffer);
+% Reset the data buffer
 save = 0;
 setappdata(0,'save',save);
 
 
 % --- Executes on button press in ConnectButton.
+% Connects serial port of bluetooth port
 function ConnectButton_Callback(hObject, eventdata, handles)
 % hObject    handle to ConnectButton (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-    import java.util.LinkedList
-    RxDataBuffer = LinkedList();
-    RxDataBuffer.clear();
+   
+
+    
+    %Set mode to ilde
     mode = 5;
     setappdata(0,'mode',mode);
+    
     if exist('mySerial')
         mySerial = getappdata(0,'mySerial');
         onCloseSerial(mySerial);
@@ -119,28 +155,43 @@ function ConnectButton_Callback(hObject, eventdata, handles)
         delete(instrfindall) % delete all instruments
     end
 
+    %Set com port
     comPort = '/dev/tty.usbserial-FT99JGHS';
     %comPort = '/dev/tty.usbserial-FTG45715';
     %comPort = '/dev/cu.usbmodem14121';
-    % It creates a serial element calling the function "setupSerial"
 
-    if(~exist('serialFlag','var'))
-        [mySerial,serialFlag] = setupSerial(comPort,RxDataBuffer);
+    % Connect to bluetooth or serial port based on BT
+    BT = getappdata(0,'BT');
+    if(~BT)
+        disp('Serial');
+        if(~exist('serialFlag','var'))
+         [mySerial,serialFlag] = setupSerial(comPort);
+        end
+    else
+        disp('Bluetooth');
+        if(~exist('b'))
+            b = Bluetooth('HC-06',1);
+            fopen(b);
+        end
+        mySerial = b;
     end
 
     setappdata(0,'mySerial',mySerial);
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
     
+    % Get all variables to be set
     pulse_frequency = uint32(str2num(get(handles.InputFrequencyInput, 'string')));
     num_pulse = uint32(str2num(get(handles.nPulsesInput, 'string')));
     tx_en_delay = uint32(str2num(get(handles.TxEnDelayInput, 'string')));
     reset_delay = uint32(str2num(get(handles.ResetDelayInput, 'string')));
+    pMode = uint32(str2num(get(handles.pModeInput, 'string')));
     
-    
-    [nSamples, connected] = SerialDataSetup(mySerial,RxDataBuffer,pulse_frequency,num_pulse,tx_en_delay,reset_delay);
+    % Send all variables to device
+    [nSamples, connected] = SerialDataSetup(mySerial,pulse_frequency,num_pulse,tx_en_delay,reset_delay,pMode);
     
     setappdata(0,'nSamples',nSamples);
     setappdata(0,'connected',connected);
+    
+    % Make sure device is connected and didn't time out
     if(connected) 
         set(handles.connectedText, 'string','Connected');
     else
@@ -151,6 +202,50 @@ function ConnectButton_Callback(hObject, eventdata, handles)
     
     save = 0;
     setappdata(0,'save',save);
+    
+    %Arduino
+    if exist('arduinoMoteControl')
+    clear arduinoMoteControl
+    end
+
+
+    % Setup Arduino 
+    ARDUINO_MOTES = 1;  %   set to 1 to use the arduino to control motes
+    pulseCount = 1;
+
+    moteControlNumber = 1;          % number of motes
+    moteControlProbability = 0.20;  % initiate a given mote 5% of pulses
+    moteControlDuration = 3;        % once a mote modulates, keep it modulated for 3 total pulses
+    moteControlLockout = 5;         % number of pulses after mote done firing that it won't re-modulate
+
+    %=========================================================================
+    % create data to send vector
+    numPulsesPerSymbol = 8;
+    numberPrependedZeroSymbols = 16;
+    dataToEncode = 1 - [0 1 1 0 1 0 0 0 0 1 1 0 0 1 0 1 0 1 1 0 1 1 0 0 0 1 1 0 1 1 0 0 0 1 1 0 1 1 1 1 0 0 1 0 0 0 0 0 0 1 1 1 0 1 1 1 0 1 1 0 1 1 1 1 0 1 1 1 0 0 1 0 0 1 1 0 1 1 0 0 0 1 1 0 0 1 0 0];
+    dataToEncodeWithPrependedZeros = [zeros(1, numberPrependedZeroSymbols), dataToEncode, zeros(1, numberPrependedZeroSymbols)];
+    dataToEncodeExpanded = ones(numPulsesPerSymbol, 1) * dataToEncodeWithPrependedZeros;
+    dataToArduino = dataToEncodeExpanded(:);
+
+
+
+
+    %=========================================================================
+    % prep arduino mote control
+    if ARDUINO_MOTES
+        arduinoMoteControl = arduino();
+        moteControlHistory = (moteControlDuration + moteControlLockout + 1).*ones(moteControlNumber, 1);  % pulses since the last time a mote started to modulate; equal to 1 on the first modulated pulse
+        moteControlLUT = {'D52', 'D53';
+                          'D48', 'D49';
+                          'D44', 'D45';
+                          'D40', 'D41'};   % the arduino pins for each mote (first column is switch, second column is led)
+        isMoteModulated = zeros(moteControlNumber, 1);
+    end
+    
+    setappdata(0,'isMoteModulated',isMoteModulated);
+    setappdata(0,'moteControlLUT',moteControlLUT);
+    setappdata(0,'dataToArduino',dataToArduino);
+    setappdata(0,'arduinoMoteControl',arduinoMoteControl);
     
 
 
@@ -251,14 +346,13 @@ function StopButton_Callback(hObject, eventdata, handles)
 % hObject    handle to StopButton (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
+    
+    % Sends the stop command to device
     mySerial = getappdata(0,'mySerial');
     mode = 4;
     fwrite(mySerial,uint32(mode),'uint32');
     setappdata(0,'mode',mode);
-        RxDataBuffer = getappdata(0,'RxDataBuffer');
-    RxDataBuffer.clear();
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
-   
+
 
 
 % --- Executes on button press in GetDataProcessedButton.
@@ -267,9 +361,8 @@ function GetDataProcessedButton_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
     
-    RxDataBuffer = getappdata(0,'RxDataBuffer');
-    RxDataBuffer.clear();
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
+    
+
     mySerial = getappdata(0,'mySerial');
     mode = 1;
     setappdata(0,'mode',mode);
@@ -277,54 +370,123 @@ function GetDataProcessedButton_Callback(hObject, eventdata, handles)
     saveFileName = get(handles.saveDataFileText, 'string');
     
     flushinput(mySerial); % flush serial port
+    pMode = uint32(str2num(get(handles.pModeInput, 'string')));
+    nSamples = getappdata(0,'nSamples');
+    nSamples = double(nSamples);
+    
+    %arduino info
+    moteControlNumber = 1;  
+    isMoteModulated = getappdata(0,'isMoteModulated');
+    moteControlLUT = getappdata(0,'moteControlLUT');
+    dataToArduino = getappdata(0,'dataToArduino');
+    arduinoMoteControl = getappdata(0,'arduinoMoteControl');
+    pulseCount = 1;
     
     %Collect and plot data
-    x = 0 ;
+    
     neuralData = 0;
+    moteData = 0;
+    
+    % Keep collecting data until told to reset or stop
     while(mode == 1)
     mode = getappdata(0,'mode');
     save = getappdata(0,'save');
-        if(mode == 4)
-            break;
-        end
-        %Check if data is received
-        if(mySerial.bytesAvailable() > 0)
-            incoming = uint32(fread(mySerial,1,'uint32'));
+   
+    
+        % Check if this is processed data
+        % Processed data will be plotted one uint32 at a time
+        % data will be appended and plotted as a "live stream"
+        if(pMode == 0)
+            %Check if data is received
+            if(mySerial.bytesAvailable() > 0)
+   
+                for g = 1:moteControlNumber
+                
+                    if(pulseCount > length(dataToArduino))
+                        pulseCount = 1;
+                    end
+                
+                    isMoteModulated = dataToArduino(pulseCount);
+                    writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 1}, isMoteModulated) % the mote switch
+                    writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 2}, isMoteModulated) % LED
+                end
 
-
-            %record and plot data as it comes in if 
-            % data is not the terminator 
-                %disp(['Incoming ',num2str(incoming)]);
-                %neuralData = incoming; 
-                %x = (((double(incoming)./2048)*400) + 500)./1000;
+                pulseCount = pulseCount + 1;
+                moteData = [moteData, isMoteModulated];
+                
+                % Get incoming data 
+                incoming = uint32(fread(mySerial,1,'uint32'));
                 x = incoming;
-                neuralData = [ neuralData, x];
+                
+                %Append data
+                neuralData = [neuralData, x];
+                
+                % Plot neural data and mote state
                 axes(handles.axes1);
-                plot(neuralData) ;
-                axis([-inf,inf,0,1.8])
+                yyaxis left
+                plot(neuralData(2:end));
+                ylabel('Neural Data');
+                
+                yyaxis right 
+                plot(moteData(2:end));
+                ylabel('Mote State');
                 xlabel('Number of Samples');
-                ylabel('Voltage [V]');
+                %axis([-inf,inf,10e6,10e8])
                 grid
                 drawnow;
 
-        end
+            end
+        elseif(pMode == 2)
+                % This is for filtered backscatter data (entire waveform)
+                if(mySerial.bytesAvailable() > 0)
+                    
+                    
+                    % do mote control
+                    for g = 1:moteControlNumber
+                        %isMoteModulated = (moteControlHistory(g) >= 1) && (moteControlHistory(g) <= moteControlDuration);  % determine if the mote is modulated during this pulse
+                        if(pulseCount > length(dataToArduino))
+                            pulseCount = 1;
+                        end
+                        isMoteModulated = dataToArduino(pulseCount);
+                        writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 1}, isMoteModulated) % the mote switch
+                        writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 2}, isMoteModulated) % LED
+                    end
+              
+
+                    pulseCount = pulseCount + 1;   
+           
+                    samples = int16(fread(mySerial,nSamples,'int16'));
+                    neuralData = (((double(samples)./2048)*400) + 500)./1000;
+                
+                
+                    plot(neuralData) ;
+                    axis([0 nSamples -1 1]);
+                    xlabel('Number of Samples');
+                    ylabel('Voltage [V]');
+                    grid
+                    drawnow;
+                        if(save)
+                            savefast(['data/raw/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM-SS.FFF'),'.mat'],'neuralData','isMoteModulated'); 
+                        end
+                end
+         end
         pause(0.001);
     end
-    if(save)
-        savefast(['data/processed/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM-SS.FFF'),'.mat'],'neuralData'); 
+    
+    if(pMode == 0)
+        savefast(['data/processed/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM-SS.FFF'),'.mat'],'neuralData','moteData'); 
     end
 
 
 
 % --- Executes on button press in GetDataRawButton.
+% Collects and plots raw, unfiltered data
 function GetDataRawButton_Callback(hObject, eventdata, handles)
 % hObject    handle to GetDataRawButton (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
    
-    RxDataBuffer = getappdata(0,'RxDataBuffer');
-    RxDataBuffer.clear();
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
+
     mySerial = getappdata(0,'mySerial');
     mode = 0;
     setappdata(0,'mode',mode);
@@ -333,12 +495,17 @@ function GetDataRawButton_Callback(hObject, eventdata, handles)
     nSamples = double(nSamples);
     
     saveFileName = get(handles.saveDataFileText, 'string');
-    %Collect and plot data
-    %terminator = 13;
-    %x = 0 ;
-    %n = 0;
-   disp(['nSamples ',num2str(nSamples)]);
-   axes(handles.axes1);
+    
+    
+    %arduino info
+    moteControlNumber = 1; 
+    pulseCount = 1;
+    isMoteModulated = getappdata(0,'isMoteModulated');
+    moteControlLUT = getappdata(0,'moteControlLUT');
+    dataToArduino = getappdata(0,'dataToArduino');
+    arduinoMoteControl = getappdata(0,'arduinoMoteControl');
+    disp(['nSamples ',num2str(nSamples)]);
+    axes(handles.axes1);
    
    % CREATE FILTER
    signalFreq = 1.8e6;
@@ -347,52 +514,48 @@ function GetDataRawButton_Callback(hObject, eventdata, handles)
    relFreqWindow = [1.2 3.8];
    firCoefs = fir1(firNumTaps, [(relFreqWindow(1).*signalFreq./samplingFreq) (relFreqWindow(2).*signalFreq./samplingFreq)], 'bandpass');
 
-   
+   % Keep collecting data while in raw data mode
    while(mode == 0)
         mode = getappdata(0,'mode');
         save = getappdata(0,'save');
-        if(mode == 4)
-            break;
-        end
+        
         %Check if data is received
         if(mySerial.bytesAvailable() > 0)
-            %disp('Got Something');
-            %incoming = RxDataBuffer.remove();
-
-            %disp(['Incoming ',num2str(incoming)]);
-            %record and plot data as it comes in if 
-            % data is not the terminator 
            
-                %disp(['Incoming ',num2str(incoming)]);
-                samples = uint32(fread(mySerial,nSamples,'uint32'));
-                neuralData = (((double(samples)./2048)*400) + 500)./1000;
+                for g = 1:moteControlNumber
+                    %isMoteModulated = (moteControlHistory(g) >= 1) && (moteControlHistory(g) <= moteControlDuration);  % determine if the mote is modulated during this pulse
+                    if(pulseCount > length(dataToArduino))
+                        pulseCount = 1;
+                    end
+                    isMoteModulated = dataToArduino(pulseCount);
+                    writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 1}, isMoteModulated) % the mote switch
+                    writeDigitalPin(arduinoMoteControl, moteControlLUT{g, 2}, isMoteModulated) % LED
+                end
                 
-                %FIlter
-                dataFiltered = filtfilt(firCoefs,1,neuralData);
-                dataFiltered = squeeze(dataFiltered);
+            pulseCount = pulseCount + 1;
+           
+            samples = uint16(fread(mySerial,nSamples,'uint16'));
+            neuralData = (((double(samples)./2048)*400) + 500)./1000;
                 
+            %FIlter
+            dataFiltered = filtfilt(firCoefs,1,neuralData);
+            dataFiltered = squeeze(dataFiltered);
                 
-                %fprintf('NeuralData\n');
-                %fprintf('%i\n',neuralData);
-                plot(dataFiltered) ;
-                axis([0 nSamples -1 1]);
+                % Display data
+                %plot(dataFiltered) ;
+                plot(neuralData);
+                axis([0 nSamples 0 1.8]);
                 xlabel('Number of Samples');
                 ylabel('Voltage [V]');
                 grid
                 drawnow;
                 if(save)
-                    %disp(['data/raw/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM'),'.mat']);
-                    %save_neuralData = neuralData;
-                   
-                   savefast(['data/raw/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM-SS.FFF'),'.mat'],'neuralData'); 
-                   %clear('neuralData');
+                   savefast(['data/raw/',saveFileName,'-',datestr(now, 'dd-mmm-yyyy-HH-MM-SS.FFF'),'.mat'],'neuralData','isMoteModulated'); 
                 end
         end
        pause(0.001);
    end
-   RxDataBuffer = getappdata(0,'RxDataBuffer');
-   RxDataBuffer.clear();
-   setappdata(0,'RxDataBuffer',RxDataBuffer);
+
     
     
 
@@ -407,9 +570,7 @@ function ResetButton_Callback(hObject, eventdata, handles)
     mode = 3;
     fwrite(mySerial,uint32(mode),'uint32');
     setappdata(0,'mode',mode);
-    RxDataBuffer = getappdata(0,'RxDataBuffer');
-    RxDataBuffer.clear();
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
+
 
 
 
@@ -442,26 +603,24 @@ function figure1_CloseRequestFcn(hObject, eventdata, handles)
 % handles    structure with handles and user data (see GUIDATA)
 
 % Hint: delete(hObject) closes the figure
-    mode = 5;
+mySerial = getappdata(0,'mySerial');
+connected = getappdata(0,'connected');
+if(connected)
+    mode = 3;
+    fwrite(mySerial,uint32(mode),'uint32');
     setappdata(0,'mode',mode);
-if exist('mySerial')
      mySerial = getappdata(0,'mySerial');
     onCloseSerial(mySerial);
+    disp('Closed!!! At end');
+else
+    delete(instrfindall) % delete all instruments
 end
-if exist('RxDataBuffer')
-    RxDataBuffer = getappdata(0,'RxDataBuffer');
-    RxDataBuffer.clear();
-    setappdata(0,'RxDataBuffer',RxDataBuffer);
-end
-if exist('connected')
-    conencted = 0;
-    setappdata(0,'connected',connected);
-    if(connected) 
-        set(handles.connectedText, 'string','Connected');
-    else
-        set(handles.connectedText, 'string','Disconnected');
-    end
-end
+
+
+connected = 0;
+setappdata(0,'connected',connected);
+%set(handles.connectedText, 'string','Disconnected');
+
 delete(instrfindall) % delete all instruments
 delete(hObject);
 
@@ -474,8 +633,10 @@ function saveDataButton_Callback(hObject, eventdata, handles)
 saveButton = get(hObject,'Value');
 if saveButton == get(hObject,'Max')
 	save = 1;
+    disp('Will Save');
 elseif saveButton == get(hObject,'Min')
 	save = 0;
+    disp('Will NOT Save');
 end
 setappdata(0,'save',save);
 
@@ -494,6 +655,60 @@ function saveDataFileText_Callback(hObject, eventdata, handles)
 % --- Executes during object creation, after setting all properties.
 function saveDataFileText_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to saveDataFileText (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+% --- Executes on button press in BTButton.
+function BTButton_Callback(hObject, eventdata, handles)
+% hObject    handle to BTButton (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+BTButton = get(hObject,'Value');
+if BTButton == get(hObject,'Max')
+	BT = 0;
+elseif BTButton == get(hObject,'Min')
+	BT = 1;
+end
+setappdata(0,'BT',BT);
+
+% %Fake GUI
+% load('data/processed/BT_BAT_ex1-02-Feb-2017-17-41-37.163.mat')   
+% 
+% 
+% yyaxis left
+% plot(neuralData(2+128:800));
+% ylabel('Backscatter Modulation Extraction');
+% yyaxis right 
+% plot(moteData(2+128:800));
+% axis([-inf inf -0.5 1.5]);
+% ylabel('Neural Dust Mote State');
+% xlabel('Bit Number');
+% 
+% set(handles.connectedText, 'string','Connected');
+
+% Hint: get(hObject,'Value') returns toggle state of BTButton
+
+
+
+function pModeInput_Callback(hObject, eventdata, handles)
+% hObject    handle to pModeInput (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: get(hObject,'String') returns contents of pModeInput as text
+%        str2double(get(hObject,'String')) returns contents of pModeInput as a double
+
+
+% --- Executes during object creation, after setting all properties.
+function pModeInput_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to pModeInput (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    empty - handles not created until after all CreateFcns called
 

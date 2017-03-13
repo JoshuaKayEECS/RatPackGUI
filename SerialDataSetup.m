@@ -1,4 +1,4 @@
-function [nSamples, connected] = SerialDataSetup(mySerial,RxDataBuffer,pulse_frequency,num_pulse,tx_en_delay,reset_delay)
+function [nSamples, connected] = SerialDataSetup(mySerial,pulse_frequency,num_pulse,tx_en_delay,reset_delay,pMode)
 % 
 % delays = [1,3,5,7,9,11,15];
 % pulse_frequency = 1800000;
@@ -9,7 +9,7 @@ function [nSamples, connected] = SerialDataSetup(mySerial,RxDataBuffer,pulse_fre
 
 %%
 startCommand = uint32(1);
-parametersCommand = uint32(2);
+parametersCommand = uint32(8);
 samplesCommand = uint32(3);
 gotIt = 0;
 terminator = 13;
@@ -18,14 +18,7 @@ nSamples = 0;
 
 %Establish connection with Device
 
-% while(gotIt ~= 1)
-%     if(RxDataBuffer.size() > 0)
-%         gotIt = RxDataBuffer.remove();
-%         disp(['Connected!',num2str(gotIt)]);
-%     end
-%     
-%     pause(0.1);
-% end
+
 tic;
 while(gotIt ~= 1)
      if(mySerial.bytesAvailable() > 0)
@@ -48,7 +41,7 @@ fwrite(mySerial,startCommand,'uint32');
 
 % Send Parameters
 % and wait until confirmation of received parameters
-N_Parameters = 12;
+N_Parameters = 13;
 parameters = zeros(1,N_Parameters);
 delays = [1,3,5,7,9,11,15];
 parameters(1:7) = delays;
@@ -56,7 +49,8 @@ parameters(8) = pulse_frequency;
 parameters(9) = num_pulse;
 parameters(10) = tx_en_delay;
 parameters(11) = reset_delay;
-parameters(12) = parametersCommand;
+parameters(12) = pMode;
+parameters(13) = parametersCommand;
 paraemeters = uint32(parameters);
 
 %gotIt = 0;
